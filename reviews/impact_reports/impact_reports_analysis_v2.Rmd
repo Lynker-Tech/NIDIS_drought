@@ -1,0 +1,93 @@
+---
+title: "Synopsis of Drought Impact Reporter Media Reports"
+author: "Keith Jennings"
+output: github_document
+---
+
+This script takes raw impact data from the [Drought Impact Reporter](https://droughtreporter.unl.edu/map/) and analyzes the number of reports for each impact category within the Intermountain West. For this project, the region consists of Arizona, New Mexcio, Colorado, Utah, and Wyoming.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1) Load packages and import data
+
+```{r message = FALSE}
+library(tidyverse)
+library(cowplot); theme_set(theme_cowplot()) # I like the cowplot because it makes plot pretty
+```
+
+```{r}
+drive_dir =  "/Volumes/GoogleDrive/My Drive/noaa-cpo-cwd/" # change for local machine
+impacts <- read.csv(paste0(drive_dir,
+                           "data/impacts/misc/drought_impact_reporter/dir_impacts_from_media_all.csv"))
+```
+
+These impact data include unique impact IDs, titles, descriptions, places, and other relevant information. For the lit review paper, we are assessing what percent each category comprises of the total number of reports.
+
+```{r}
+head(impacts) %>% knitr::kable()
+```
+
+## 2) Work with the data
+
+First we'll need to subset the data to only locations within the Intermountain West. Let's make a list of state abbreviations and names as they appear in the dataframe.
+
+```{r}
+states <- c("Arizona", "AZ",
+            "New Mexico", "NM",
+            "Colorado", "CO",
+            "Utah", "UT",
+            "Wyoming", "WY")
+```
+
+We'll then filter the data to include only locations including those strings.
+
+```{r}
+impacts_IMW <- impacts %>% 
+  filter(str_detect(Place, paste(states, collapse = "|")))
+```
+
+This is good, but includes some false positives like Colorado County, TX. To fix this, we'll remove any entries that include other state abbreviations.
+
+```{r}
+states_omit = state.abb[-c(3, 6, 31, 44, 50)] # numbers remove IMW states from vector
+
+# filter to exlcude states in states_omit
+impacts_IMW2 <- impacts_IMW %>% 
+  filter(str_detect(Place, paste(states_omit, collapse = "|")) == FALSE)
+```
+
+Now we'll filter down to one row per unique ID to ensure impact reports aren't double-counted.
+
+```{r}
+impacts_IMW3 <- impacts_IMW2 %>% 
+  distinct(Id, .keep_all = TRUE)
+```
+
+## 3) Summarize the data
+
+Now we'll summarise the number of reports per category
+
+```{r}
+impacts_summary <- impacts_IMW3 %>% 
+  summarize(agriculture = sum(str_detect(Categories, "Agriculture")),
+            energy = sum(str_detect(Categories, "Energy")),
+            fire = sum(str_detect(Categories, "Fire")),
+            restrictions = sum(str_detect(Categories, "Restrictions")),
+            plants = sum(str_detect(Categories, "Plants")),
+            recreation = sum(str_detect(Categories, "Recreation")),
+            water_supply = sum(str_detect(Categories, "Water Supply")),
+            public_health = sum(str_detect(Categories, "Public Health")),
+            business = sum(str_detect(Categories, "Business"))) %>% 
+  pivot_longer(cols = everything(),
+               values_to = "n") %>% 
+  mutate(pct_of_total = n/length(impacts_IMW3$Id) * 100) %>% 
+  arrange(desc(n))
+```
+
+Note: the above code will produce a pct_of_total sum greater than 100 because each unique ID can contain multiple categories.
+
+```{r}
+impacts_summary %>% knitr::kable()
+```

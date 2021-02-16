@@ -1,0 +1,492 @@
+---
+title: "P-PET figures"
+author: "Rachel"
+date: "11/16/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Setup
+
+```{r}
+
+#install.packages("SPEI")
+library(tidyverse)
+library(lubridate)
+library(cowplot)
+library(SPEI)
+library(sf)
+library(extrafont)
+
+#font_import()
+#loadfonts(device = "win")
+theme_set(theme_cowplot(font_size = 12))
+options(scipen = 100)
+
+```
+
+
+#Wildfire data (no prescribed, false alarms, or assist fires)
+
+```{r}
+wildfires_all <- st_read("./data_do_not_push/wf_all_1980_2016/wf_all_1980_2016.shp")
+#data downloaded from https://wildfire.cr.usgs.gov/firehistory/data.html, downloaded "only wildfire data" which does NOT include "false alarms, assist fires, and prescribed fires"
+
+newrownames <- c("01/01/2016", "02/01/2016", "03/01/2016","04/01/2016", "05/01/2016", "06/01/2016", "07/01/2016", "08/01/2016", "09/01/2016", "10/01/2016", "11/01/2016", "12/01/2016")
+
+#reformat to calculate average number of wildfires by month
+wildfires_CO <- wildfires_all %>%
+  filter(STATE == "Colorado", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = ifelse(month<7,n/35,n/36)) %>% #divided by 35 yrs if before July, based on fire start date
+  mutate(month = newrownames[2:11]) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+#to add Jan and Dec for states with no fires during those months:
+  as.data.frame() %>%
+  select(month, n, avg_monthly) %>% #get rid of geometry column
+  add_row(month = as.Date("2020-01-01"), n = 0, avg_monthly = 0) %>%
+  add_row(month = as.Date("2020-12-01"), n = 0, avg_monthly = 0) %>%
+  arrange(month)
+
+wildfires_AZ <- wildfires_all %>%
+  filter(STATE == "Arizona", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = ifelse(month<4,n/35,n/36)) %>% #divided by 35 yrs if before April, based on fire start date
+  mutate(month = newrownames) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_NM <- wildfires_all %>%
+  filter(STATE == "New Mexico", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = ifelse(month<7,n/35,n/36)) %>% #divided by 35 yrs if before July, based on fire start date
+  mutate(month = newrownames) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_UT <- wildfires_all %>%
+  filter(STATE == "Utah", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = n/35) %>% #divided by 35 yrs based on fire start date
+  mutate(month = newrownames[2:11]) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+#to add Jan and Dec for states with no fires during those months:
+  as.data.frame() %>%
+  select(month, n, avg_monthly) %>% #get rid of geometry column
+  add_row(month = as.Date("2020-01-01"), n = 0, avg_monthly = 0) %>%
+  add_row(month = as.Date("2020-12-01"), n = 0, avg_monthly = 0) %>%
+  arrange(month)
+
+wildfires_WY <- wildfires_all %>%
+  filter(STATE == "Wyoming", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = n/35) %>% #divided by 35 yrs based on fire start date
+  mutate(month = newrownames[2:11]) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  #to add Jan and Dec for states with no fires during those months:
+  as.data.frame() %>%
+  select(month, n, avg_monthly) %>% #get rid of geometry column
+  add_row(month = as.Date("2020-01-01"), n = 0, avg_monthly = 0) %>%
+  add_row(month = as.Date("2020-12-01"), n = 0, avg_monthly = 0) %>%
+  arrange(month)
+```
+
+#Precip data
+
+```{r}
+#read in data
+#data from WWDT, https://wrcc.dri.edu/wwdt/time/, precip in inches
+precip_AZ <- read.csv("./data_raw/precip_AZ.csv") %>% na_if(-9999.00)
+precip_CO <- read.csv("./data_raw/precip_CO.csv") %>% na_if(-9999.00)
+precip_NM <- read.csv("./data_raw/precip_NM.csv") %>% na_if(-9999.00)
+precip_UT <- read.csv("./data_raw/precip_UT.csv") %>% na_if(-9999.00)
+precip_WY <- read.csv("./data_raw/precip_WY.csv") %>% na_if(-9999.00)
+
+#rename columns
+newcolnames <- c("Year", "01/01/2016", "02/01/2016", "03/01/2016","04/01/2016", "05/01/2016", "06/01/2016", "07/01/2016", "08/01/2016", "09/01/2016", "10/01/2016", "11/01/2016", "12/01/2016")
+colnames(precip_AZ) <- newcolnames
+colnames(precip_CO) <- newcolnames
+colnames(precip_NM) <- newcolnames
+colnames(precip_UT) <- newcolnames
+colnames(precip_WY) <- newcolnames
+
+# reformat for average precip by month
+precip_AZ <- gather(precip_AZ, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) 
+precip_CO <- gather(precip_CO, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) 
+precip_NM <- gather(precip_NM, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+precip_UT <- gather(precip_UT, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+precip_WY <- gather(precip_WY, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) 
+
+
+```
+
+
+#Temp data
+
+```{r}
+#read in data
+temp_AZ <- read.csv("./data_raw/temp_AZ.csv") %>% na_if(-9999.00) 
+temp_CO <- read.csv("./data_raw/temp_CO.csv") %>% na_if(-9999.00)
+temp_NM <- read.csv("./data_raw/temp_NM.csv") %>% na_if(-9999.00)
+temp_UT <- read.csv("./data_raw/temp_UT.csv") %>% na_if(-9999.00)
+temp_WY <- read.csv("./data_raw/temp_WY.csv") %>% na_if(-9999.00)
+
+#rename columns
+newcolnames <- c("Year", "01/01/2016", "02/01/2016", "03/01/2016","04/01/2016", "05/01/2016", "06/01/2016", "07/01/2016", "08/01/2016", "09/01/2016", "10/01/2016", "11/01/2016", "12/01/2016")
+colnames(temp_AZ) <- newcolnames
+colnames(temp_CO) <- newcolnames
+colnames(temp_NM) <- newcolnames
+colnames(temp_UT) <- newcolnames
+colnames(temp_WY) <- newcolnames
+
+# reformat for average temp by month
+temp_AZ <- gather(temp_AZ, key = "month", value = "temp", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  mutate(temp_C = (temp-32)*(5/9))
+temp_CO <- gather(temp_CO, key = "month", value = "temp", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  mutate(temp_C = (temp-32)*(5/9))
+temp_NM <- gather(temp_NM, key = "month", value = "temp", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  mutate(temp_C = (temp-32)*(5/9))
+temp_UT <- gather(temp_UT, key = "month", value = "temp", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y"))%>%
+  mutate(temp_C = (temp-32)*(5/9))
+temp_WY <- gather(temp_WY, key = "month", value = "temp", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  mutate(temp_C = (temp-32)*(5/9))
+
+
+```
+
+#Calculate PET using thornthwaite equation
+
+```{r}
+#average latitudes of each state
+lat_AZ <- 34.048927
+lat_CO <- 39.113014
+lat_NM <- 34.307144
+lat_UT <- 39.419220
+lat_WY <- 43.075970
+  
+#calculate PET. Value of PET is in mm
+PET_AZ <- thornthwaite(temp_AZ$temp_C, lat_AZ, na.rm=TRUE)
+PET_CO <- thornthwaite(temp_CO$temp_C, lat_CO, na.rm=TRUE)
+PET_NM <- thornthwaite(temp_NM$temp_C, lat_NM, na.rm=TRUE)
+PET_UT <- thornthwaite(temp_UT$temp_C, lat_UT, na.rm=TRUE)
+PET_WY <- thornthwaite(temp_WY$temp_C, lat_WY, na.rm=TRUE)
+
+#convert PET to inches
+conv_factor = 25.4 #mm in one inch
+PET_AZ <- PET_AZ/conv_factor
+PET_CO <- PET_CO/conv_factor
+PET_NM <- PET_NM/conv_factor
+PET_UT <- PET_UT/conv_factor
+PET_WY <- PET_WY/conv_factor
+
+#subtract PET from P
+precip_AZ$diff <- precip_AZ$precip - PET_AZ
+precip_CO$diff <- precip_CO$precip - PET_CO
+precip_NM$diff <- precip_NM$precip - PET_NM
+precip_UT$diff <- precip_UT$precip - PET_UT
+precip_WY$diff <- precip_WY$precip - PET_WY
+
+#group by month, average by month, etc
+AZ <- precip_AZ %>%
+  group_by(month) %>%
+  summarise(avg_diff = mean(diff, na.rm=TRUE), 
+            N = sum(!is.na(diff)), 
+            sd = sd(diff, na.rm=TRUE), 
+            se = sd/sqrt(N))
+CO <- precip_CO %>%
+  group_by(month) %>%
+  summarise(avg_diff = mean(diff, na.rm=TRUE), 
+            N = sum(!is.na(diff)), 
+            sd = sd(diff, na.rm=TRUE), 
+            se = sd/sqrt(N))
+NM <- precip_NM %>%
+  group_by(month) %>%
+  summarise(avg_diff = mean(diff, na.rm=TRUE), 
+            N = sum(!is.na(diff)), 
+            sd = sd(diff, na.rm=TRUE), 
+            se = sd/sqrt(N))
+UT <- precip_UT %>%
+  group_by(month) %>%
+  summarise(avg_diff = mean(diff, na.rm=TRUE), 
+            N = sum(!is.na(diff)), 
+            sd = sd(diff, na.rm=TRUE), 
+            se = sd/sqrt(N))
+WY <- precip_WY %>%
+  group_by(month) %>%
+  summarise(avg_diff = mean(diff, na.rm=TRUE), 
+            N = sum(!is.na(diff)), 
+            sd = sd(diff, na.rm=TRUE), 
+            se = sd/sqrt(N))
+
+#cbind wildfires and P-PET into one dataframe
+
+AZ$avg_wildfires <- wildfires_AZ$avg_monthly
+CO$avg_wildfires <- wildfires_CO$avg_monthly
+NM$avg_wildfires <- wildfires_NM$avg_monthly
+UT$avg_wildfires <- wildfires_UT$avg_monthly
+WY$avg_wildfires <- wildfires_WY$avg_monthly
+```
+
+#Plot P-PET and wildfires
+
+```{r}
+AZ_PET <- ggplot(data = AZ, aes(x=month, y = avg_diff)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(aes(ymin=avg_diff-se, ymax=avg_diff+se), width=0.2) +
+  scale_x_date(date_labels="%b", breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "P-PET", title = "Arizona") +
+  geom_line(data = AZ, aes(x=month, y = (avg_wildfires), group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = AZ, aes(x=month, y = (avg_wildfires), group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~., name = "Average # Wildfires\n"), expand = c(0.01,0))
+AZ_PET
+
+CO_PET <- ggplot(data = CO, aes(x=month, y = avg_diff)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(aes(ymin=avg_diff-se, ymax=avg_diff+se), width=0.2) +
+  scale_x_date(date_labels="%b", breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "P-PET", title = "Colorado") 
+CO_PET
+
+NM_PET <- ggplot(data = NM, aes(x=month, y = avg_diff)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(aes(ymin=avg_diff-se, ymax=avg_diff+se), width=0.2) +
+  scale_x_date(date_labels="%b", breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "P-PET", title = "New Mexico") 
+NM_PET
+
+UT_PET <- ggplot(data = UT, aes(x=month, y = avg_diff)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(aes(ymin=avg_diff-se, ymax=avg_diff+se), width=0.2) +
+  scale_x_date(date_labels="%b", breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "P-PET", title = "Utah") 
+UT_PET
+
+WY_PET <- ggplot(data = WY, aes(x=month, y = avg_diff)) +
+  geom_bar(stat="identity") +
+  geom_errorbar(aes(ymin=avg_diff-se, ymax=avg_diff+se), width=0.2) +
+  scale_x_date(date_labels="%b", breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "P-PET", title = "Wyoming") 
+WY_PET
+
+#save
+ggsave(AZ_PET, filename ="./output/AZ_PET.png", bg="transparent")
+ggsave(CO_PET, filename ="./output/CO_PET.png", bg="transparent")
+ggsave(NM_PET, filename ="./output/NM_PET.png", bg="transparent")
+ggsave(UT_PET, filename ="./output/UT_PET.png", bg="transparent")
+ggsave(WY_PET, filename ="./output/WY_PET.png", bg="transparent")
+```
+
+##Arizona
+```{r}
+
+## add extra space to right margin of plot within frame
+par(mar=c(5, 4, 4, 6) + 0.1, family = 'Times New Roman')
+
+#A function to add error bars on the chart
+error.bar <- function(x, y, upper, lower=upper, length=0.1,...){
+  arrows(x,y+upper, x, y-lower, angle=90, code=3, length=length, ...)
+}
+
+## Plot P-PET
+AZ_plot <- barplot(AZ$avg_diff, pch=16, axes=FALSE, xlab="", ylab="", 
+   col="grey", main="Arizona", ylim=c(-5,2), yaxs="i")
+axis(2,col="black",las=1)  ## las=1 makes horizontal labels
+mtext("",side=2,line=2.5)
+error.bar(AZ_plot,AZ$avg_diff, AZ$sd)
+box()
+
+## Allow a second plot on the same graph
+par(new=TRUE)
+
+## Plot the second plot and put axis scale on right
+plot(AZ$month, AZ$avg_wildfires, pch=15,  xlab="", ylab="",  
+    axes=FALSE, type="b", col="red", ylim=c(0,20), yaxs="i")
+## a little farther out (line=4) to make room for labels
+mtext("",side=4,col="red",line=4) 
+axis(4, col="black",col.axis="black",las=1)
+
+## Draw the x axis
+axis.Date(1,at=seq(min(AZ$month), max(AZ$month), by = "months"), format = "%b")
+mtext("",side=1,col="black",line=2.5, cex = 0.9)
+
+```
+
+
+##Colorado
+```{r}
+
+## add extra space to right margin of plot within frame
+par(mar=c(5, 4, 4, 6) + 0.1, family = 'Times New Roman')
+
+#A function to add error bars on the chart
+error.bar <- function(x, y, upper, lower=upper, length=0.1,...){
+  arrows(x,y+upper, x, y-lower, angle=90, code=3, length=length, ...)
+}
+
+## Plot P-PET
+CO_plot <- barplot(CO$avg_diff, pch=16, axes=FALSE, xlab="", ylab="", 
+   col="grey", main="Colorado", ylim=c(-5,2), yaxs="i")
+axis(2,col="black",las=1)  ## las=1 makes horizontal labels
+mtext("",side=2,line=2.5)
+error.bar(CO_plot,CO$avg_diff, CO$sd)
+box()
+
+## Allow a second plot on the same graph
+par(new=TRUE)
+
+## Plot the second plot and put axis scale on right
+plot(CO$month, CO$avg_wildfires, pch=15,  xlab="", ylab="",  
+    axes=FALSE, type="b", col="red", ylim=c(0,20), yaxs="i")
+## a little farther out (line=4) to make room for labels
+mtext("",side=4,col="red",line=4) 
+axis(4, col="black",col.axis="black",las=1)
+
+## Draw the x axis
+axis.Date(1,at=seq(min(CO$month), max(CO$month), by = "months"), format = "%b")
+mtext("",side=1,col="black",line=2.5, cex = 09)  
+```
+
+##New Mexico
+```{r}
+
+## add extra space to right margin of plot within frame
+par(mar=c(5, 4, 4, 6) + 0.1, family = 'Times New Roman')
+
+#A function to add error bars on the chart
+error.bar <- function(x, y, upper, lower=upper, length=0.1,...){
+  arrows(x,y+upper, x, y-lower, angle=90, code=3, length=length, ...)
+}
+
+## Plot P-PET
+NM_plot <- barplot(NM$avg_diff, pch=16, axes=FALSE, xlab="", ylab="", 
+   col="grey", main="New Mexico", ylim=c(-5,2), yaxs="i")
+axis(2,col="black",las=1)  ## las=1 makes horizontal labels
+mtext("",side=2,line=2.5)
+error.bar(NM_plot,NM$avg_diff, NM$sd)
+box()
+
+## Allow a second plot on the same graph
+par(new=TRUE)
+
+## Plot the second plot and put axis scale on right
+plot(NM$month, NM$avg_wildfires, pch=15,  xlab="", ylab="",  
+    axes=FALSE, type="b", col="red", ylim=c(0,20), yaxs="i")
+## a little farther out (line=4) to make room for labels
+mtext("",side=4,col="red",line=4) 
+axis(4, col="black",col.axis="black",las=1)
+
+## Draw the x axis
+axis.Date(1,at=seq(min(NM$month), max(NM$month), by = "months"), format = "%b")
+mtext("",side=1,col="black",line=2.5, cex = 0.9)
+```
+
+##Utah
+```{r}
+
+## add extra space to right margin of plot within frame
+par(mar=c(5, 4, 4, 6) + 0.1, family = 'Times New Roman')
+
+#A function to add error bars on the chart
+error.bar <- function(x, y, upper, lower=upper, length=0.1,...){
+  arrows(x,y+upper, x, y-lower, angle=90, code=3, length=length, ...)
+}
+
+## Plot P-PET
+UT_plot <- barplot(UT$avg_diff, pch=16, axes=FALSE, xlab="", ylab="", 
+   col="grey", main="Utah", ylim=c(-5,2), yaxs="i")
+axis(2,col="black",las=1)  ## las=1 makes horizontal labels
+mtext("",side=2,line=2.5)
+error.bar(UT_plot,UT$avg_diff, UT$sd)
+box()
+
+## Allow a second plot on the same graph
+par(new=TRUE)
+
+## Plot the second plot and put axis scale on right
+plot(UT$month, UT$avg_wildfires, pch=15,  xlab="", ylab="",  
+    axes=FALSE, type="b", col="red", ylim=c(0,20), yaxs="i")
+## a little farther out (line=4) to make room for labels
+mtext("",side=4,col="red",line=4) 
+axis(4, col="black",col.axis="black",las=1)
+
+## Draw the x axis
+axis.Date(1,at=seq(min(UT$month), max(UT$month), by = "months"), format = "%b")
+mtext("",side=1,col="black",line=2.5, cex = 0.9)
+
+```
+
+##Wyoming
+```{r}
+
+## add extra space to right margin of plot within frame
+par(mar=c(5, 4, 4, 6) + 0.1, family = 'Times New Roman')
+
+#A function to add error bars on the chart
+error.bar <- function(x, y, upper, lower=upper, length=0.1,...){
+  arrows(x,y+upper, x, y-lower, angle=90, code=3, length=length, ...)
+}
+
+## Plot P-PET
+WY_plot <- barplot(WY$avg_diff, pch=16, axes=FALSE, xlab="", ylab="", 
+   col="grey", main="Wyoming", ylim=c(-5,2), yaxs="i")
+axis(2,col="black",las=1)  ## las=1 makes horizontal labels
+mtext("",side=2,line=2.5)
+error.bar(WY_plot,WY$avg_diff, WY$sd)
+box()
+
+## Allow a second plot on the same graph
+par(new=TRUE)
+
+## Plot the second plot and put axis scale on right
+plot(WY$month, WY$avg_wildfires, pch=15,  xlab="", ylab="",  
+    axes=FALSE, type="b", col="red", ylim=c(0,20), yaxs="i")
+## a little farther out (line=4) to make room for labels
+mtext("",side=4,col="red",line=4) 
+axis(4, col="black",col.axis="black",las=1)
+
+## Draw the x axis
+axis.Date(1,at=seq(min(WY$month), max(WY$month), by = "months"), format = "%b")
+mtext("",side=1,col="black",line=2.5, cex = 0.9)
+
+```
+

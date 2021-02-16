@@ -1,0 +1,743 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+#Set up
+
+```{r}
+
+library(tidyverse)
+library(lubridate)
+library(cowplot)
+library(sf)
+library(maps)
+library(nationalparkcolors)
+library(epitools)
+library(rgdal)
+library(scales)
+library(extrafont)
+
+
+#loadfonts(device = "win")
+theme_set(theme_cowplot())
+
+
+#colors and theme
+pal <- park_palette("SmokyMountains")
+theme_set(theme_cowplot())
+options(scipen = 100)
+```
+
+#Map IMW states
+
+```{r}
+states <- st_as_sf(map(database = "state", plot = TRUE, fill = TRUE, col = "white"))
+
+imw <- states %>% 
+  filter(ID %in% c("arizona", "colorado", "new mexico", "utah", "wyoming")) %>%
+  summarise(ID = "imw")
+
+map <- ggplot() +
+  geom_sf(data = states) +
+  geom_sf(data = imw, col = "red", alpha = 0, size = 1) +
+  theme_map()
+
+map
+
+#ggsave("imw_map.png")
+```
+
+#PDSI time series plots - October only
+
+```{r}
+
+dat <- read.csv("./data_raw/PDSI_time_series_oct.csv")
+
+#aggregate PDSI for all states
+dat <- dat %>% 
+  mutate(agg = (Colorado + Utah + Wyoming + New_Mexico + Arizona)/5)
+
+# calculate a 5-year running average of the data
+smoothed.data <- smooth.spline(dat$Year, dat$agg)
+
+dat$smoothed <- smoothed.data$y
+
+# add a color variable
+dat$color = ifelse(dat$agg > 0, T, F)
+
+# plot data
+p <- ggplot(dat, aes(x = Year, y = agg)) +
+  geom_bar(stat = "identity", aes(fill = color)) +
+ 
+  geom_line(data = dat, aes(x = Year, y = smoothed), size = 0.8) +
+ 
+  scale_fill_manual(values = c("red", "blue")) +
+
+  scale_x_continuous(limits = c(1895,2020), breaks = seq(1900,2020,10)) +
+  #scale_x_continuous(limits = c(1980,2020), breaks = seq(1980,2020,5)) +
+ 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5),
+        legend.position = "none") +
+ 
+  labs(x = NULL,
+       y = "Palmer Drought Severity Index") 
+
+print(p)
+
+ggsave(p, filename = "./output/PDSI_timeseries_oct.png",  bg = "transparent")
+```
+
+
+#PDSI time series plots - all months
+
+```{r}
+
+PDSI_AZ <- read.csv("./data_raw/PDSI/PDSI_AZ.csv") %>% na_if(-9999)
+PDSI_CO <- read.csv("./data_raw/PDSI/PDSI_CO.csv") %>% na_if(-9999)
+PDSI_NM <- read.csv("./data_raw/PDSI/PDSI_NM.csv") %>% na_if(-9999)
+PDSI_UT <- read.csv("./data_raw/PDSI/PDSI_UT.csv") %>% na_if(-9999)
+PDSI_WY <- read.csv("./data_raw/PDSI/PDSI_WY.csv") %>% na_if(-9999)
+
+#average over each year
+PDSI_AZ_skinny<- PDSI_AZ %>%
+   mutate(agg_AZ = select(., Jan:Dec) %>% apply(1, mean, na.rm=TRUE)) %>%
+  select (Year, agg_AZ)
+PDSI_CO_skinny<- PDSI_CO %>%
+   mutate(agg_CO = select(., Jan:Dec) %>% apply(1, mean, na.rm=TRUE)) %>%
+  select (agg_CO)
+PDSI_NM_skinny<- PDSI_NM %>%
+   mutate(agg_NM = select(., Jan:Dec) %>% apply(1, mean, na.rm=TRUE)) %>%
+  select (agg_NM)
+PDSI_UT_skinny<- PDSI_UT %>%
+   mutate(agg_UT = select(., Jan:Dec) %>% apply(1, mean, na.rm=TRUE)) %>%
+  select (agg_UT)
+PDSI_WY_skinny<- PDSI_WY %>%
+   mutate(agg_WY = select(., Jan:Dec) %>% apply(1, mean, na.rm=TRUE)) %>%
+  select (agg_WY)
+
+
+#aggregate PDSI for all states
+dat <- cbind(PDSI_AZ_skinny, PDSI_CO_skinny, PDSI_NM_skinny, PDSI_UT_skinny, 
+             PDSI_WY_skinny)
+
+dat <- dat %>%
+   mutate(agg_mean = select(., agg_AZ:agg_WY) %>% apply(1, mean, na.rm=TRUE))
+
+# calculate a 5-year running average of the data
+smoothed.data <- smooth.spline(dat$Year, dat$agg_mean)
+
+dat$smoothed <- smoothed.data$y
+
+# add a color variable
+dat$color = ifelse(dat$agg_mean > 0, T, F)
+
+# plot data
+p <- ggplot(dat, aes(x = Year, y = agg_mean)) +
+  geom_bar(stat = "identity", aes(fill = color)) +
+ 
+  geom_line(data = dat, aes(x = Year, y = smoothed), size = 0.8) +
+ 
+  scale_fill_manual(values = c("red", "blue")) +
+
+  scale_x_continuous(limits = c(1895,2020), breaks = seq(1900,2020,10)) +
+  #scale_x_continuous(limits = c(1980,2020), breaks = seq(1980,2020,5)) +
+ 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5),
+        legend.position = "none") +
+ 
+  labs(x = NULL,
+       y = "Palmer Drought Severity Index") +
+  annotate(geom="text", x=2002, y = -3.8, label = "2002 Drought", color = "black") +
+  annotate(geom="text", x=1957, y = -3.3, label = "1950's Drought", color = "black") +
+  annotate(geom="text", x=1933, y = -4.5, label = "Dust Bowl Drought", color = "black") +
+  annotate(geom="text", x=2012, y = -3, label = "2012 Drought", color = "black") +
+  annotate("segment", x = 1895, xend = 1895, y = 0, yend = 4, colour = "blue", size=2, arrow=arrow()) +
+   annotate("segment", x = 1895, xend = 1895, y = 0, yend = -4, colour = "red", size=2, arrow=arrow()) +
+  annotate("text", x = 1895, y = 5.3, label = "wetter, non-drought conditions", hjust = 0, color = "blue") +
+  annotate("text", x = 1895, y = -5.3, label = "drier, drought conditions", hjust = 0, color = "red") +
+annotate("rect", xmin = 1905, xmax = 1923, ymin = -5, ymax = 5, fill = "blue", alpha = 0.1) +
+  annotate("rect", xmin = 1933, xmax = 1936, ymin = -5, ymax = 5, fill = "red", alpha = 0.1) +
+  annotate("rect", xmin = 1953, xmax = 1956, ymin = -5, ymax = 5, fill = "red", alpha = 0.1) +
+  annotate("rect", xmin = 2000, xmax = 2004, ymin = -5, ymax = 5, fill = "red", alpha = 0.1) +
+  annotate("rect", xmin = 2012, xmax = 2014, ymin = -5, ymax = 5, fill = "red", alpha = 0.1)
+print(p)
+
+#ggsave(p, filename = "./output/PDSI_timeseries_all_months.png",  bg = "transparent")
+```
+
+
+#Wildfire data (all types)
+```{r}
+#all total natural wildfires recorded between 04/23/1980-12/21/2016
+#data found currently in Google Drive folder co_vic 
+dir <- "D:/projects/cpo/CPO_coping_with_drought/data_do_not_push/wildfires/"
+shps <- dir("D:/projects/cpo/CPO_coping_with_drought/data_do_not_push/wildfires", "*.shp$")
+
+BIA <- st_read(paste0(dir,shps[1]))
+BLM <- st_read(paste0(dir,shps[2]))
+BOR <- st_read(paste0(dir,shps[3]))
+FS <- st_read(paste0(dir,shps[4]))
+FWS <- st_read(paste0(dir,shps[5]))
+NPS <- st_read(paste0(dir,shps[6]))
+
+wildfires <- rbind(BIA,BLM,BOR,FS,FWS,NPS)
+
+
+newrownames <- c("01/01/2016", "02/01/2016", "03/01/2016","04/01/2016", "05/01/2016", "06/01/2016", "07/01/2016", "08/01/2016", "09/01/2016", "10/01/2016", "11/01/2016", "12/01/2016")
+
+#reformat to calculate average number of wildfires by month
+wildfires_CO <- wildfires %>%
+  filter(state == "Colorado") %>% 
+  mutate(month = month(startdated)) %>%
+  count(month) %>%
+  mutate(avg_monthly = ifelse(month<5,n/35,n/36)) %>% #divided by 35 yrs if before May, based fire start
+  mutate(month = newrownames) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_AZ <- wildfires %>%
+  filter(state == "Arizona") %>% 
+  mutate(month = month(startdated)) %>%
+  count(month)%>%
+  mutate(avg_monthly = ifelse(month<5,n/35,n/36)) %>%
+  mutate(month = newrownames) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_UT <- wildfires %>%
+  filter(state == "Utah") %>% 
+  mutate(month = month(startdated)) %>%
+  count(month)%>%
+  mutate(avg_monthly = ifelse(month<5,n/35,n/36)) %>%
+  mutate(month = newrownames) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_NM <- wildfires %>%
+  filter(state == "New Mexico") %>% 
+  mutate(month = month(startdated)) %>%
+  count(month)%>%
+  mutate(avg_monthly = ifelse(month<5,n/35,n/36)) %>%
+  mutate(month = newrownames) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_WY <- wildfires %>%
+  filter(state == "Wyoming") %>% 
+  mutate(month = month(startdated)) %>%
+  count(month)%>%
+  mutate(avg_monthly = ifelse(month<5,n/35,n/36)) %>%
+  mutate(month = newrownames) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+#total wildfires by year
+wildfires
+
+```
+
+
+
+
+#Wildfire data (no prescribed, false alarms, or assist fires)
+
+```{r}
+wildfires_all <- st_read("./data_do_not_push/wf_all_1980_2016/wf_all_1980_2016.shp")
+#data downloaded from https://wildfire.cr.usgs.gov/firehistory/data.html, downloaded "only wildfire data" which does NOT include "false alarms, assist fires, and prescribed fires"
+
+newrownames <- c("01/01/2016", "02/01/2016", "03/01/2016","04/01/2016", "05/01/2016", "06/01/2016", "07/01/2016", "08/01/2016", "09/01/2016", "10/01/2016", "11/01/2016", "12/01/2016")
+
+#reformat to calculate average number of wildfires by month
+wildfires_CO <- wildfires_all %>%
+  filter(STATE == "Colorado", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = ifelse(month<7,n/35,n/36)) %>% #divided by 35 yrs if before July, based on fire start date
+  mutate(month = newrownames[2:11]) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_AZ <- wildfires_all %>%
+  filter(STATE == "Arizona", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = ifelse(month<4,n/35,n/36)) %>% #divided by 35 yrs if before April, based on fire start date
+  mutate(month = newrownames) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_NM <- wildfires_all %>%
+  filter(STATE == "New Mexico", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = ifelse(month<7,n/35,n/36)) %>% #divided by 35 yrs if before July, based on fire start date
+  mutate(month = newrownames) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_UT <- wildfires_all %>%
+  filter(STATE == "Utah", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = n/35) %>% #divided by 35 yrs based on fire start date
+  mutate(month = newrownames[2:11]) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+
+wildfires_WY <- wildfires_all %>%
+  filter(STATE == "Wyoming", 
+         SIZECLASS %in% c("D", "E", "F", "G")) %>% 
+  mutate(month = month(STARTDATED)) %>%
+  count(month) %>%
+  filter(month != "NA") %>%
+  mutate(avg_monthly = n/35) %>% #divided by 35 yrs based on fire start date
+  mutate(month = newrownames[2:11]) %>%
+  mutate(month=as.Date(month, format = "%m/%d/%y"))
+```
+
+#Precip data
+
+```{r}
+#read in data
+precip_AZ <- read.csv("./data_raw/precip_AZ.csv") %>% na_if(-9999.00) 
+precip_CO <- read.csv("./data_raw/precip_CO.csv") %>% na_if(-9999.00)
+precip_NM <- read.csv("./data_raw/precip_NM.csv") %>% na_if(-9999.00)
+precip_UT <- read.csv("./data_raw/precip_UT.csv") %>% na_if(-9999.00)
+precip_WY <- read.csv("./data_raw/precip_WY.csv") %>% na_if(-9999.00)
+
+#rename columns
+newcolnames <- c("Year", "01/01/2016", "02/01/2016", "03/01/2016","04/01/2016", "05/01/2016", "06/01/2016", "07/01/2016", "08/01/2016", "09/01/2016", "10/01/2016", "11/01/2016", "12/01/2016")
+colnames(precip_AZ) <- newcolnames
+colnames(precip_CO) <- newcolnames
+colnames(precip_NM) <- newcolnames
+colnames(precip_UT) <- newcolnames
+colnames(precip_WY) <- newcolnames
+
+# reformat for average precip by month
+precip_AZ <- gather(precip_AZ, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_precip = mean(precip, na.rm=TRUE)) 
+precip_CO <- gather(precip_CO, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_precip = mean(precip, na.rm=TRUE)) 
+precip_NM <- gather(precip_NM, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_precip = mean(precip, na.rm=TRUE)) 
+precip_UT <- gather(precip_UT, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_precip = mean(precip, na.rm=TRUE)) 
+precip_WY <- gather(precip_WY, key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_precip = mean(precip, na.rm=TRUE)) 
+
+
+```
+
+
+#Plot precip and wildfires
+```{r}
+#Arizona
+p1 <- ggplot() +
+  geom_point(data = precip_AZ, aes(x = month, y = avg_precip)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Average Precipitation (in)")
+
+w1 <- ggplot() +
+  geom_point(data = wildfires_AZ, aes(month, y = avg_monthly)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Number of wildfires")
+
+pw1 <- plot_grid(p1, w1, labels = "Arizona", align = "hv")
+
+#Colorado
+p2 <- ggplot() +
+  geom_point(data = precip_CO, aes(x = month, y = avg_precip)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Average Precipitation (in)")
+
+w2 <- ggplot() +
+  geom_point(data = wildfires_CO, aes(month, y = avg_monthly)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Number of wildfires")
+
+pw2 <- plot_grid(p2, w2, labels = "Colorado", align = "hv")
+
+#New Mexico
+p3 <- ggplot() +
+  geom_point(data = precip_NM, aes(x = month, y = avg_precip)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Average Precipitation (in)")
+
+w3 <- ggplot() +
+  geom_point(data = wildfires_NM, aes(month, y = avg_monthly)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Number of wildfires")
+
+pw3 <- plot_grid(p3, w3, labels = "New Mexico", align = "hv")
+
+#Utah
+p4 <- ggplot() +
+  geom_point(data = precip_UT, aes(x = month, y = avg_precip)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Average Precipitation (in)")
+
+w4 <- ggplot() +
+  geom_point(data = wildfires_UT, aes(month, y = avg_monthly)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Number of wildfires")
+
+pw4 <- plot_grid(p4, w4, labels = "Utah", align = "hv")
+
+#Wyoming
+p5 <- ggplot() +
+  geom_point(data = precip_WY, aes(x = month, y = avg_precip)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Average Precipitation (in)")
+
+w5 <- ggplot() +
+  geom_point(data = wildfires_WY, aes(month, y = avg_monthly)) +
+  scale_x_date(labels = date_format("%b"), breaks = "2 months") +
+  labs(x = NULL, y = "Number of wildfires")
+
+pw5 <- plot_grid(p5, w5, labels = "Wyoming", align = "hv")
+
+ggsave(pw1, filename = "./output/precip_wildfires_AZ.png",  bg = "transparent")
+ggsave(pw2, filename = "./output/precip_wildfires_CO.png",  bg = "transparent")
+ggsave(pw3, filename = "./output/precip_wildfires_NM.png",  bg = "transparent")
+ggsave(pw4, filename = "./output/precip_wildfires_UT.png",  bg = "transparent")
+ggsave(pw5, filename = "./output/precip_wildfires_WY.png",  bg = "transparent")
+  
+```
+
+
+
+#SPEI data
+
+```{r}
+#read in from csv
+SPEI_AZ <- read.csv("./data_raw/SPEI_AZ.csv") %>% na_if(-9999.00) 
+SPEI_CO <- read.csv("./data_raw/SPEI_CO.csv") %>% na_if(-9999.00)
+SPEI_NM <- read.csv("./data_raw/SPEI_NM.csv") %>% na_if(-9999.00)
+SPEI_UT <- read.csv("./data_raw/SPEI_UT.csv") %>% na_if(-9999.00)
+SPEI_WY <- read.csv("./data_raw/SPEI_WY.csv") %>% na_if(-9999.00)
+
+#rename columns
+newcolnames <- c("Year", "01/01/2016", "02/01/2016", "03/01/2016","04/01/2016", "05/01/2016", "06/01/2016", "07/01/2016", "08/01/2016", "09/01/2016", "10/01/2016", "11/01/2016", "12/01/2016")
+colnames(SPEI_AZ) <- newcolnames
+colnames(SPEI_CO) <- newcolnames
+colnames(SPEI_NM) <- newcolnames
+colnames(SPEI_UT) <- newcolnames
+colnames(SPEI_WY) <- newcolnames
+
+# reformat for average SPEI by month
+SPEI_AZ <- gather(SPEI_AZ, key = "month", value = "SPEI", -Year) %>%
+  group_by(month) %>%  
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_SPEI = mean(SPEI, na.rm=TRUE), 
+            N = sum(!is.na(SPEI)), 
+            sd = sd(SPEI, na.rm=TRUE), 
+            se = sd/sqrt(N)) 
+SPEI_CO <- gather(SPEI_CO, key = "month", value = "SPEI", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_SPEI = mean(SPEI, na.rm=TRUE), 
+            N = sum(!is.na(SPEI)), 
+            sd = sd(SPEI, na.rm=TRUE), 
+            se = sd/sqrt(N)) 
+SPEI_NM <- gather(SPEI_NM, key = "month", value = "SPEI", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_SPEI = mean(SPEI, na.rm=TRUE), 
+            N = sum(!is.na(SPEI)), 
+            sd = sd(SPEI, na.rm=TRUE), 
+            se = sd/sqrt(N)) 
+SPEI_UT <- gather(SPEI_UT, key = "month", value = "SPEI", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_SPEI = mean(SPEI, na.rm=TRUE), 
+            N = sum(!is.na(SPEI)), 
+            sd = sd(SPEI, na.rm=TRUE), 
+            se = sd/sqrt(N)) 
+SPEI_WY <- gather(SPEI_WY, key = "month", value = "SPEI", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_SPEI = mean(SPEI, na.rm=TRUE), 
+            N = sum(!is.na(SPEI)), 
+            sd = sd(SPEI, na.rm=TRUE), 
+            se = sd/sqrt(N))  
+
+
+
+#cbind wildfires and SPEI into one dataframe
+
+SPEI_AZ$avg_wildfires <- wildfires_AZ$avg_monthly
+SPEI_CO$avg_wildfires <- wildfires_CO$avg_monthly
+SPEI_NM$avg_wildfires <- wildfires_NM$avg_monthly
+SPEI_UT$avg_wildfires <- wildfires_UT$avg_monthly
+SPEI_WY$avg_wildfires <- wildfires_WY$avg_monthly
+```
+
+#Plot SPEI and wildfires
+
+##Arizona
+```{r}
+#plot with se error bars
+AZ_w_error <- ggplot(data = SPEI_AZ, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  geom_errorbar(aes(ymin=avg_SPEI-se, ymax=avg_SPEI+se), width=0.2) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "Arizona") +
+  geom_line(data = SPEI_AZ, aes(x=month, y = (avg_wildfires)/50000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_AZ, aes(x=month, y = (avg_wildfires)/50000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*50000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+AZ_w_error
+
+
+#plot without error bars
+AZ <- ggplot(data = SPEI_AZ, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "Arizona") +
+  geom_line(data = SPEI_AZ, aes(x=month, y = (avg_wildfires)/50000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_AZ, aes(x=month, y = (avg_wildfires)/50000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*50000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+AZ
+
+ggsave(AZ_w_error, filename ="./output/AZ_SPEI_plot_error.png", bg="transparent")
+ggsave(AZ, filename = "./output/AZ_SPEI_plot.png", bg = "transparent")
+```
+
+##Colorado
+```{r}
+
+#plot with se error bars
+CO_w_error <- ggplot(data = SPEI_CO, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  geom_errorbar(aes(ymin=avg_SPEI-se, ymax=avg_SPEI+se), width=0.2, position = position_dodge(0.9)) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "Colorado") +
+  geom_line(data = SPEI_CO, aes(x=month, y = (avg_wildfires)/40000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_CO, aes(x=month, y = (avg_wildfires)/40000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*40000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+CO_w_error
+
+
+#plot without error bars
+CO <- ggplot(data = SPEI_CO, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "Colorado") +
+  geom_line(data = SPEI_CO, aes(x=month, y = (avg_wildfires)/40000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_CO, aes(x=month, y = (avg_wildfires)/40000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*40000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+CO
+
+ggsave(CO_w_error, filename ="./output/CO_SPEI_plot_error.png", bg="transparent")
+ggsave(CO, filename = "./output/CO_SPEI_plot.png", bg = "transparent")
+```
+
+##New Mexico
+```{r}
+
+#plot with se error bars
+NM_w_error <- ggplot(data = SPEI_NM, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  geom_errorbar(aes(ymin=avg_SPEI-se, ymax=avg_SPEI+se), width=0.2) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "New Mexico") +
+  geom_line(data = SPEI_NM, aes(x=month, y = (avg_wildfires)/20000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_NM, aes(x=month, y = (avg_wildfires)/20000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*20000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+NM_w_error
+
+
+#plot without error bars
+NM <- ggplot(data = SPEI_NM, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "New Mexico") +
+  geom_line(data = SPEI_NM, aes(x=month, y = (avg_wildfires)/20000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_NM, aes(x=month, y = (avg_wildfires)/20000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*20000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+NM
+
+ggsave(NM_w_error, filename ="./output/NM_SPEI_plot_error.png", bg="transparent")
+ggsave(NM, filename = "./output/NM_SPEI_plot.png", bg = "transparent")
+```
+
+##Utah
+```{r}
+
+#plot with se error bars
+UT_w_error <- ggplot(data = SPEI_UT, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  geom_errorbar(aes(ymin=avg_SPEI-se, ymax=avg_SPEI+se), width=0.2) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "Utah") +
+  geom_line(data = SPEI_UT, aes(x=month, y = (avg_wildfires)/30000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_UT, aes(x=month, y = (avg_wildfires)/30000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*30000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+UT_w_error
+
+
+#plot without error bars
+UT <- ggplot(data = SPEI_UT, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "Utah") +
+  geom_line(data = SPEI_UT, aes(x=month, y = (avg_wildfires)/30000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_UT, aes(x=month, y = (avg_wildfires)/30000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*30000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+UT
+
+ggsave(UT_w_error, filename ="./output/UT_SPEI_plot_error.png", bg="transparent")
+ggsave(UT, filename = "./output/UT_SPEI_plot.png", bg = "transparent")
+```
+
+##Wyoming
+```{r}
+
+#plot with se error bars
+WY_w_error <- ggplot(data = SPEI_WY, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  geom_errorbar(aes(ymin=avg_SPEI-se, ymax=avg_SPEI+se), width=0.2) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "Wyoming") +
+  geom_line(data = SPEI_WY, aes(x=month, y = (avg_wildfires)/15000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_WY, aes(x=month, y = (avg_wildfires)/15000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*15000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+WY_w_error
+
+
+#plot without error bars
+WY <- ggplot(data = SPEI_WY, aes(x=month, y = avg_SPEI)) +
+  geom_bar(stat="identity", fill = pal[2]) +
+  scale_x_date(labels = date_format("%b"), breaks = "1 month", expand=c(0.02,0)) +
+  labs(x = NULL, y = "Average SPEI\n", title = "Wyoming") +
+  geom_line(data = SPEI_WY, aes(x=month, y = (avg_wildfires)/15000, group = 1), inherit.aes=FALSE,
+            size = 1) +
+  geom_point(data = SPEI_WY, aes(x=month, y = (avg_wildfires)/15000, group = 1), inherit.aes=FALSE,
+             size = 2) +
+  scale_y_continuous(sec.axis=sec_axis(~.*15000, name = "Average # Wildfires\n"), expand = c(0.01,0))
+WY
+
+ggsave(WY_w_error, filename ="./output/WY_SPEI_plot_error.png", bg="transparent")
+ggsave(WY, filename = "./output/WY_SPEI_plot.png", bg = "transparent")
+```
+
+```{r}
+wildfires <- 
+  wildfires %>%
+  mutate(year = year(startdated))
+hist(wildfires$year, breaks = 36)
+hist(wildfires$year[wildfires$state=="Arizona"])
+hist(wildfires$year[wildfires$state=="Colorado"], breaks = 36)
+
+
+ggplot(wildfires, aes(year, color = state, fill = state)) +
+  geom_histogram(binwidth=1)
+
+
+```
+
+
+#Scrap
+
+```{r}
+wildfiresCO<- wildfires_CO %>%
+  group_by(month = floor_date(startdated, "month")) %>%
+  count(wildfires$startdated)
+
+
+
+CObymonth <- aggregate(cbind(firenumber)~month(startdated),
+                       data=wildfires_CO, FUN=sum)
+
+CObymonth <- count(wildfires_CO, "startdated")
+table(wildfires_CO$startdated)
+
+wildfires2 <- wildfires %>%
+  select(organizati, firename, cause, firetype, year_, startdated, outdated, totalacres) %>%
+  summarise()
+
+
+precip_NM$month <- as.month(precip_NM$month, format = "$month")
+
+name_to_date <- function(x) {
+  lubridate::mdy(ifelse(x %in% c(month.name, month.abb), paste0(x, "/01/2016"), x))
+}
+
+precip_NM$month <- precip_NM$month %>%
+  mutate(month, name_to_date)
+
+
+list.dfs <- list(precip_NM, precip_CO, precip_NM, precip_UT, precip_WY)
+colnames <- c("Year", "01/01/2016", "02/01/2016", "03/01/2016","04/01/2016", "05/01/2016", "06/01/2016", "07/01/2016", "08/01/2016", "09/01/2016", "10/01/2016", "11/01/2016", "12/01/2016")
+list.dfs <- lapply(list.dfs, setNames, colnames)
+
+for (i in seq_along(list.dfs)){
+  gather(list.dfs[[i]], key = "month", value = "precip", -Year) %>%
+  group_by(month) %>% 
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_precip = mean(precip, na.rm=TRUE)) 
+  
+#calculate mean and standard deviation of SPEI for error bars
+
+SPEI_test <- read.csv("./data_raw/SPEI_AZ.csv") %>% na_if(-9999.00) 
+colnames(SPEI_test) <- newcolnames
+SPEI_test <- gather(SPEI_test, key = "month", value = "SPEI", -Year) %>%
+  group_by(month) %>%  
+  mutate(month=as.Date(month, format = "%m/%d/%y")) %>%
+  summarise(avg_SPEI = mean(SPEI, na.rm=TRUE), sd = sd(SPEI, na.rm=TRUE)) 
+
+
+
+  length2 <- function (x, na.rm=FALSE) {
+    if (na.rm) sum(!is.na(x))
+    else       length(x)
+}
+test <- summaryBy(SPEI ~ month, data=SPEI_test, FUN=c(length2,mean,sd), na.rm=TRUE)
+
+data_summary <- function(data, varname, groupnames){
+  summary_func <- function(x, col){
+    c(mean = mean(x[[col]], na.rm=TRUE),
+      sd = sd(x[[col]], na.rm=TRUE))
+  }
+  data_sum<-ddply(data, groupnames, .fun=summary_func,
+                  varname)
+  data_sum <- rename(data_sum, c("mean" = varname))
+ return(data_sum)
+}
+
+test <- data_summary(SPEI_test, varname = "SPEI", groupnames = c("month", "Year"))
+
+
+
+
+```
+

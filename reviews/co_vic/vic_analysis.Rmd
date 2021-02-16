@@ -1,0 +1,167 @@
+---
+title: "vic_analysis"
+author: "Rachel"
+date: "11/10/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up
+
+```{r}
+#install.packages("mapplots")
+#install.packages("raster")
+library(mapplots)
+library(raster)
+library(sf)
+library(lubridate)
+library(tidyverse)
+```
+
+
+###load data from "./data_do_not_push"
+
+```{r}
+getwd()
+load("../data_do_not_push/VIC_monthly_Precip_PET_Temp.Rdata")
+```
+
+#subtract baseline from hot/dry to determine change for every timestep in every gridcell
+```{r}
+
+diff_precip <- vic_monthly$hotdry_precip - vic_monthly$base_precip
+diff_temp <- vic_monthly$hotdry_temp - vic_monthly$base_temp
+diff_pet <- vic_monthly$hotdry_pet - vic_monthly$base_pet
+
+
+```
+
+#add back in date column 
+```{r}
+Datecol <- vic_monthly$base_precip$date
+diff_precip$date <- Datecol
+diff_temp$date <- Datecol
+diff_pet$date <- Datecol
+```
+
+#average through time (to produce one value for each grid cell)
+```{r}
+#annual_avg_precip <- colMeans(diff_precip[,-1])
+annual_avg_temp <- colMeans(diff_temp[,-1])
+annual_avg_pet <- colMeans(diff_pet[,-1])
+```
+
+
+#create raster
+
+rasterFromXYZ(xyz, res=c(NA,NA), crs="", digits=5)
+```{r}
+x <- vic_monthly$lon
+y <- vic_monthly$lat
+
+#precip
+#xyz <- data.frame(x,y,annual_avg_precip)
+#
+#rst <- rasterFromXYZ(xyz)
+#crs(rst) <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #confirm crs
+#crs(rst)
+
+#writeRaster(rst, './output/precip_chg.tif')
+
+#temp
+xyz <- data.frame(x,y,annual_avg_temp)
+
+rst <- rasterFromXYZ(xyz)
+crs(rst) <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #confirm crs
+crs(rst)
+
+writeRaster(rst, '../output/temp_chg.tif')
+
+#pet
+xyz <- data.frame(x,y,annual_avg_pet)
+
+rst <- rasterFromXYZ(xyz)
+crs(rst) <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #confirm crs
+crs(rst)
+
+writeRaster(rst, '../output/pet_chg.tif')
+```
+
+
+#change factor for precip
+```{r}
+chg_factor_precip <- vic_monthly$hotdry_precip[-1]/vic_monthly$base_precip[-1]
+
+
+#month change factor for precip to compare to vol2 section 14 monthly change factors
+precip_monthly <- chg_factor_precip %>%
+  mutate(date = ymd(Datecol)) %>%
+  gather(key = "gridcell", value = "value", -date) %>%
+  mutate(month = month(date)) %>%
+  group_by(month) %>%
+  summarise(avg_precip = mean(value, na.rm = TRUE)) 
+
+#average through time (to produce one value for each grid cell)
+chg_factor_precip[is.na(chg_factor_precip)] <- 0
+chg_factor_avg_precip <- colMeans(chg_factor_precip)
+
+
+#write raster for change factor 
+xyz <- data.frame(x,y,chg_factor_avg_precip)
+
+rst <- rasterFromXYZ(xyz)
+crs(rst) <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0" #confirm crs
+crs(rst)
+writeRaster(rst, '../output/precip_chg_factor.tif')
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#create grid
+###did not work--"could not find function geoTiff"
+make.grid(x, y, z, byx , byy , xlim, ylim, fun = function(x) sum(x, na.rm = T))
+
+Arguments
+x  a vector of x-coordinates (longitude)
+y  a vector of y-coordinates (latitude; same length as x)
+z  a vector of values; same length as x
+byx, byy  the size of the grid cells on the x and y scale
+xlim, ylim  the x and y limits of the grid. Note that the origin of the grid depends on xlim[1] and ylim[1], these values will be taken as the mid-point of the bottom-left grid-cell. 
+fun  a function to be applied to z. Defaults to sum.
+```{r}
+minlon <- min(vic_monthly$lon)
+maxlon <- max(vic_monthly$lon)
+minlat <- min(vic_monthly$lat)
+maxlat <- max(vic_monthly$lat)
+xlim <- c(minlon, maxlon)
+ylim <- c(minlat, maxlat)
+x <- vic_monthly$lon
+y <- vic_monthly$lat
+byx <- 1
+byy <- 0.5
+
+grd <- make.grid(x, y, annual_avg_precip, byx, byy, xlim, ylim)
+draw.grid(grd,breaks)
+
+geoTiff(grd, "./output/test.tiff")
+mapplots::geoTiff(grd, "./output/test.tiff")
+rgdal::geoTiff(grd, "./output/test.tiff")
+
+```
+

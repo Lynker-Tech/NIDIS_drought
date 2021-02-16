@@ -1,0 +1,91 @@
+---
+title: "reservoir storage"
+author: "Rachel"
+date: "11/18/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Setup
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(cowplot)
+library(zoo)
+library(extrafont)
+
+getwd()
+#loadfonts(device = "win")
+theme_set(theme_cowplot())
+options(scipen = 100)
+
+```
+
+#Granby reservoir data
+```{r}
+granby_all <- read.csv("./data_do_not_push/Selected_Station_Observations_Daily_Xtab_202011181320.csv")
+#units in AF
+
+granby_skinny <- granby_all %>%
+  select(Date.Time, STORAGE.Value) %>%
+  mutate(Date = as.Date(Date.Time, format = "%m/%d/%Y")) %>%
+  select(Date, STORAGE.Value)
+
+write.csv(granby_skinny, "./data_clean/granby_reservoir_storage.csv") 
+
+#find daily average and arrange by water year
+granby_daily_avg <- granby_skinny %>%
+  mutate(day = lubridate::day(Date), month = lubridate::month(Date)) %>%
+  group_by(month, day) %>%
+  summarize(multi_year_mean = mean(STORAGE.Value, na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  #create water year
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  )) %>%
+  filter(plot_date != "2020-02-29") %>% #leap year outlier
+  #create weekly rolling average
+  mutate(rolling_mean = rollapply(multi_year_mean,7, FUN = mean, na.rm = T, partial = TRUE))
+  
+
+
+
+#extract September 2001-September 2002
+granby_2002 <- granby_skinny %>%
+  filter(Date > "2001-09-30" & Date < "2002-10-01") %>%
+  mutate(day = lubridate::day(Date), month = lubridate::month(Date)) %>%
+  group_by(month, day) %>%
+  summarize(daily_storage = mean(STORAGE.Value, na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  )) %>%
+  filter(plot_date != "2020-02-12") #big outlier
+  
+```
+
+#Plot 
+```{r}
+
+
+reservoir_plot <- ggplot() +
+   #geom_point(data=granby_daily_avg, aes(plot_date, multi_year_mean)) +
+   geom_line(data=granby_2002, aes(plot_date, daily_storage), color="blue", lwd =1) +
+   geom_line(data=granby_daily_avg, aes(x = plot_date, rolling_mean), lwd = 1) +
+   scale_x_date(expand=c(00.02,0.75), date_breaks = "1 month", date_labels = "%b") +
+   labs(x = "", y = "Granby Reservoir Storage (AF)")+ 
+   annotate(geom="text", x=as.Date("2020-09-01"), y = 225000, label = "2002 Drought", color = "blue") +    annotate(geom="text", x=as.Date("2020-08-25"), y = 420000, label = "1986-2020 Average", color = "black")
+
+reservoir_plot
+
+ggsave(reservoir_plot, filename = "./output/granby_reservoir_storage.png", bg = "transparent")  
+```
+

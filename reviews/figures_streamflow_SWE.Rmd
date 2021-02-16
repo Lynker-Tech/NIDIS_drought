@@ -1,0 +1,437 @@
+---
+title: "Streamflow & SWE"
+author: "Rachel"
+date: "11/18/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Setup
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(cowplot)
+library(png)
+library(scales)
+library(sf)
+library(maps)
+library(leaflet)
+library(leaflet.providers)
+library(zoo)
+
+getwd()
+#loadfonts(device = "win")
+theme_set(theme_cowplot(font_size = 26, font_family = "Arial"))
+options(scipen = 100)
+```
+
+
+#Streamflow data below Granby - not using anymore
+```{r}
+streamflow_all <- read.csv("./data_do_not_push/Streamflow_Colo_River_below_Granby_COLGBYCO_1950.csv")
+
+#select pertinent columns
+streamflow_skinny <- streamflow_all %>%
+  mutate(Date = as.Date(Meas.Date, format = "%m/%d/%Y")) %>%
+  select(Date, Streamflow.Value)
+
+#summarize mean daily averages
+streamflow_daily_avg <- streamflow_skinny %>%
+  mutate(day = lubridate::day(Date), month = lubridate::month(Date)) %>%
+  group_by(month, day) %>%
+  summarize(multi_year_mean = mean(Streamflow.Value, na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  ))
+
+#extract water year 2002
+streamflow_2002 <- streamflow_skinny %>%
+  filter(Date > "2001-09-30" & Date < "2002-10-01") %>%
+  mutate(day = lubridate::day(Date), month = lubridate::month(Date)) %>%
+  group_by(month, day) %>%
+  summarize(daily_streamflow = Streamflow.Value) %>% 
+  ungroup() %>% 
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  )) 
+```
+
+
+
+#Streamflow data above Granby, below baker gulch nr grand lake COLBAKCO
+```{r}
+#https://dwr.state.co.us/Tools/Stations/COLBAKCO?params=DISCHRG
+streamflow_inflow_all <- read.csv("./data_do_not_push/Streamflow_Colo_River_below_Baker_Gulch.csv") %>% na_if(-999)
+
+#select pertinent columns
+streamflow_inflow_skinny <- streamflow_inflow_all %>%
+  mutate(Date = as.Date(Meas.Date, format = "%m/%d/%Y")) %>%
+  filter(Date > "1985-12-31") %>% #to match Granby Res POR of 1986-2020
+  select(Date, Streamflow.Value)
+
+#summarize mean daily averages
+streamflow_inflow_daily_avg <- streamflow_inflow_skinny %>%
+  mutate(day = lubridate::day(Date), month = lubridate::month(Date)) %>%
+  group_by(month, day) %>%
+  summarize(multi_year_mean = mean(Streamflow.Value, na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  ))
+
+#extract water year 2002
+streamflow_inflow_2002 <- streamflow_inflow_skinny %>%
+  filter(Date > "2001-09-30" & Date < "2002-10-01") %>%
+  mutate(day = lubridate::day(Date), month = lubridate::month(Date)) %>%
+  group_by(month, day) %>%
+  summarize(daily_streamflow = Streamflow.Value) %>% 
+  ungroup() %>% 
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  )) 
+```
+
+##Convert streamflow to depth per timestep
+```{r}
+#convert to metric
+metric_conv_cfs <- 0.0283168 #m^3/s = 1 cfs
+#drainage basin area
+drainage_area <- 63.8 #square miles
+drainage_area_metric <- drainage_area*2.59e6 #square meters
+meters_to_mm <- 1000
+sec_to_day <- 60*60*24
+
+#all data
+streamflow_depth <- streamflow_inflow_daily_avg %>%
+  select(plot_date, multi_year_mean) %>%
+  mutate(depth_in_mm = multi_year_mean*metric_conv_cfs/drainage_area_metric*meters_to_mm*sec_to_day) %>%
+  filter(plot_date != "2020-02-29")
+
+#2002 only
+streamflow_depth_2002 <- streamflow_inflow_2002 %>%
+  select(plot_date, daily_streamflow) %>%
+  mutate(depth_in_mm = daily_streamflow*metric_conv_cfs/drainage_area_metric*meters_to_mm*sec_to_day)
+
+#merge into one
+streamflow_depth$streamflow_2002 <- streamflow_depth_2002$depth_in_mm
+
+#convert into long dataset
+streamflow_depth <- streamflow_depth %>% pivot_longer(c("depth_in_mm", "streamflow_2002"), names_to = "type", values_to = "depth_mm") %>%
+  select(-multi_year_mean)
+```
+
+
+#SWE data
+```{r}
+#read in SWE data created from snotel_download_RB. RDS is in data_raw folder
+
+snotel <- readRDS("./data_Raw/snotel/snotel_793_1981_2020.RDS") #actually first data isn't until 1985
+
+#select pertinent columns
+snotel_skinny <- snotel %>% 
+  select(date, swe_mm, site_id) %>%
+  filter(date > "1985-12-01") %>%
+  na_if(-2537.46) #which is -99.9 in inches. They have this every 9-30
+
+
+#summarize mean daily averages
+snotel_daily_avg <- snotel_skinny %>%
+  mutate(day = lubridate::day(date), month = lubridate::month(date)) %>%
+  group_by(month, day) %>%
+  summarize(multi_year_mean = mean(swe_mm, na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  ))
+
+#extract water year 2002
+snotel_2002 <- snotel_skinny %>%
+  filter(date > "2001-09-30" & date < "2002-10-01") %>%
+  mutate(day = lubridate::day(date), month = lubridate::month(date)) %>%
+  group_by(month, day) %>%
+  summarize(daily_snotel = swe_mm) %>% 
+  ungroup() %>% 
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  )) 
+```
+
+
+
+#Plot streamflow below Granby
+```{r}
+#plot of all data
+ggplot(streamflow_skinny, aes(x=Date, y = Streamflow.Value)) +
+  geom_line()
+
+#plot of water year daily averages 
+ggplot(streamflow_daily_avg, aes(x=plot_date, y = multi_year_mean)) +
+  geom_line() +
+  scale_x_date(expand=c(00.02,0.75), date_breaks = "1 month", date_labels = "%b") +
+   labs(x = "", y = "Average Discharge (cfs)")
+
+#plot of water year daily averages compared to 2002 water year
+streamflow_plot <- ggplot() +
+  geom_line(data = streamflow_daily_avg, aes(x=plot_date, y = multi_year_mean)) +
+  geom_line(data = streamflow_2002, aes(x=plot_date, y = daily_streamflow), color = "blue") +
+  scale_x_date(expand=c(00.02,0.75), date_breaks = "1 month", date_labels = "%b") +
+  labs(x = "", y = "Average Discharge (cfs)") + 
+  annotate(geom="text", x=as.Date("2020-08-01"), y = 40, label = "2002 Drought", color = "blue") +          annotate(geom="text", x=as.Date("2020-08-15"), y = 150, label = "1950-2020 Average", color = "black")
+#not sure why the 2002 data is missing
+
+streamflow_plot
+```
+
+
+
+
+#Plot streamflow below Baker Gulch COLBAKCO
+```{r}
+#plot of all data
+ggplot(streamflow_inflow_skinny, aes(x=Date, y = Streamflow.Value)) +
+  geom_line()
+
+#plot of water year daily averages 
+ggplot(streamflow_inflow_daily_avg, aes(x=plot_date, y = multi_year_mean)) +
+  geom_line() +
+  scale_x_date(expand=c(00.02,0.75), date_breaks = "1 month", date_labels = "%b") +
+   labs(x = "", y = "Average Discharge (cfs)")
+
+#plot of water year daily averages compared to 2002 water year
+streamflow_plot2 <- ggplot() +
+  geom_line(data = streamflow_inflow_daily_avg, aes(x=plot_date, y = multi_year_mean), 
+            lwd=1) +
+  geom_line(data = streamflow_inflow_2002, aes(x=plot_date, y = daily_streamflow), 
+            lwd=1, color = "blue") +
+  scale_x_date(expand=c(00.02,0.75), date_breaks = "1 month", date_labels = "%b") +
+  labs(x = "", y = "Average Discharge (cfs)\n") + 
+  annotate(geom="text", x=as.Date("2020-09-01"), y = 100, label = "2002 Drought", 
+           color = "blue") +          
+  annotate(geom="text", x=as.Date("2020-09-01"), y = 300, label = "1954-2020 Average", 
+           color = "black")
+
+
+streamflow_plot2
+ggsave(streamflow_plot2, filename = "./output/streamflow_COLBAKCO.jpeg")
+
+#convert to metric
+metric_conv_cfs <- 0.0283168 #m^3/s = 1 cfs
+
+streamflow_plot_metric <- ggplot() +
+  geom_line(data = streamflow_inflow_daily_avg, 
+            aes(x=plot_date, y = multi_year_mean*metric_conv_cfs), lwd=1) +
+  geom_line(data = streamflow_inflow_2002, 
+            aes(x=plot_date, y = daily_streamflow*metric_conv_cfs), 
+            color = "blue", lwd=1) +
+  scale_x_date(expand=c(00.02,0.75), date_breaks = "1 month", date_labels = "%b") +
+  labs(x = "", y = expression(paste("Average Discharge (m"^3*"/s)"))) + 
+  annotate(geom="text", x=as.Date("2020-09-01"), y = 2.5, label = "2002 Drought", 
+           color = "blue") +          
+  annotate(geom="text", x=as.Date("2020-08-15"), y = 7.5, label = "1954-2020 Average", 
+           color = "black")
+
+
+streamflow_plot_metric
+ggsave(streamflow_plot_metric, filename = "./output/streamflow_metric_COLBAKCO.jpeg")
+```
+
+
+#Plot streamflow depth
+
+```{r}
+
+depth <- ggplot() +
+  geom_line(data = streamflow_depth, 
+            aes(x=plot_date, y = depth_mm, color = type), lwd=1) +
+  scale_x_date(expand=c(00.02,0.75), date_breaks = "2 months", date_labels = "%b") +
+  labs(x = "", y = "USGS gage 09010500\nDepth (mm)") +
+  scale_colour_manual(values =c("#000000", "#0000FF"),
+                        name  ="",
+                        breaks=c("depth_in_mm", "streamflow_2002"),
+                        labels=c("1986-2020 Average", "2002 Drought")) +
+  theme(legend.position = c(0.04,0.9),
+        axis.title.y=element_text(angle=0, vjust=0.5))
+depth
+```
+
+#Plot SWE
+```{r}
+
+snotel_daily_avg$snotel_2002 <- snotel_2002$daily_snotel
+snotel_daily_avg <- snotel_daily_avg %>% pivot_longer(c("multi_year_mean", "snotel_2002"), names_to = "type", values_to = "swe_mm")
+
+
+#plot of water year daily averages compared to 2002 water year
+swe_plot <- ggplot() +
+  geom_line(data = snotel_daily_avg, aes(x=plot_date, y = swe_mm, color = type), lwd=1) +
+  scale_x_date(expand=c(00.02,0.75), date_breaks = "2 months", date_labels = "%b") +
+  labs(x = "", y = "SNOTEL Stillwater Creek\nSWE (mm)") +
+  scale_colour_manual(values =c("#000000", "#0000FF")) +
+  theme(legend.position="none", axis.title.y=element_text(angle=0, vjust=0.5))
+  
+
+
+swe_plot
+```
+
+#Plot Depth and SWE
+```{r}
+SWE_streamflow <- ggplot() +
+  geom_line(data = streamflow_depth, 
+            aes(x=plot_date, y = depth_in_mm), lwd=1) +
+  geom_line(data = streamflow_depth_2002, 
+            aes(x=plot_date, y = depth_in_mm), color = "blue", lwd=1) + 
+  geom_line(data = snotel_daily_avg, aes(x=plot_date, y = multi_year_mean), 
+            lwd=1, lty=2) +
+  geom_line(data = snotel_2002, aes(x=plot_date, y = daily_snotel), 
+            color = "blue", lwd = 1, lty=2) +
+  annotate(geom="text", x=as.Date("2020-09-01"), y = 40, label = "2002 Drought", 
+           color = "blue") +          
+  annotate(geom="text", x=as.Date("2020-09-01"), y = 170, label = "1981-2020 Average",
+           color = "black") +
+  scale_x_date(expand=c(00.02,0.75), date_breaks = "1 month", date_labels = "%b") +
+  labs(x = "", y = expression(paste("Depth in mm")))
+  
+SWE_streamflow
+```
+
+
+#Granby reservoir data
+```{r}
+granby_all <- read.csv("./data_do_not_push/Selected_Station_Observations_Daily_Xtab_202011181320.csv")
+#units in AF
+
+granby_skinny <- granby_all %>%
+  select(Date.Time, STORAGE.Value) %>%
+  mutate(Date = as.Date(Date.Time, format = "%m/%d/%Y")) %>%
+  select(Date, STORAGE.Value)
+
+write.csv(granby_skinny, "./data_clean/granby_reservoir_storage.csv") 
+
+#find daily average and arrange by water year
+granby_daily_avg <- granby_skinny %>%
+  mutate(day = lubridate::day(Date), month = lubridate::month(Date)) %>%
+  group_by(month, day) %>%
+  summarize(multi_year_mean = mean(STORAGE.Value, na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  #create water year
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  )) %>%
+  filter(plot_date != "2020-02-29") %>% #leap year outlier
+  #create weekly rolling average
+  mutate(rolling_mean = rollapply(multi_year_mean,7, FUN = mean, na.rm = T, partial = TRUE))
+  
+
+
+
+#extract September 2001-September 2002
+granby_2002 <- granby_skinny %>%
+  filter(Date > "2001-09-30" & Date < "2002-10-01") %>%
+  mutate(day = lubridate::day(Date), month = lubridate::month(Date)) %>%
+  group_by(month, day) %>%
+  summarize(daily_storage = mean(STORAGE.Value, na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  mutate(plot_date = case_when( # use "real" date axis and wrap-around 
+    month >= 10 ~ as.Date(sprintf("2019-%02s-%02s", month, day)),
+    TRUE ~ as.Date(sprintf("2020-%02s-%02s", month, day)) # account for leap year(s)
+  )) %>%
+  filter(plot_date != "2020-02-12") #big outlier
+  
+```
+
+#Plot granby storage
+```{r}
+metric_conv <- 1233.48 #1 acre foot is 1233.48 cubic meters
+
+#reservoir_plot <- ggplot() +
+#   #geom_point(data=granby_daily_avg, aes(plot_date, multi_year_mean)) +
+#   geom_line(data=granby_2002, aes(plot_date, daily_storage), color="blue", lwd =1) +
+#   geom_line(data=granby_daily_avg, aes(x = plot_date, rolling_mean), lwd = 1) +
+#   scale_x_date(expand=c(00.02,0.75), date_breaks = "1 month", date_labels = "%b") +
+#   labs(x = "", y = "Granby Reservoir Storage (AF)")+ 
+#   annotate(geom="text", x=as.Date("2020-09-01"), y = 225000, label = "2002 Drought", #color = "blue") +    annotate(geom="text", x=as.Date("2020-08-25"), y = 420000, label = #"1986-2020 Average", color = "black")
+
+#reservoir_plot
+
+reservoir_plot2 <- ggplot() +
+   #geom_point(data=granby_daily_avg, aes(plot_date, multi_year_mean)) +
+   geom_line(data=granby_2002, 
+             aes(plot_date, daily_storage*metric_conv/1000000), color="blue", lwd =1) +
+   geom_line(data=granby_daily_avg, 
+             aes(x = plot_date, rolling_mean*metric_conv/1000000), lwd = 1) +
+   scale_x_date(expand=c(00.02,0.75), date_breaks = "2 months", date_labels = "%b") +
+   labs(x = "", y = expression(paste("Granby Reservoir \nStorage (billion m"^3*")"))) +
+  theme(axis.title.y=element_text(angle=0, vjust=0.5))
+
+reservoir_plot2
+```
+
+
+#Plot both streamflow and SWE
+```{r}
+
+p <- plot_grid(reservoir_plot, swe_plot, ncol=1, axis = "bl", align = "v")
+p
+
+p2 <- plot_grid(reservoir_plot, swe_plot, streamflow_plot2, ncol=1, axis = "bl",
+                align = "v")
+p2
+
+save_plot("./output/SWE_Reservoir.jpeg", p)
+save_plot("./output/Reservoir_metric.jpeg", reservoir_plot2)
+save_plot("./output/Reservoir_SWE_Streamflow.jpeg", p2)
+ggsave(p2, filename = "./output/Reservoir_SWE_Streamflow2.jpeg")
+```
+
+#maps
+```{r}
+locations <- st_read("./data_do_not_push/granby_locations.shp")
+cities <- st_read("./data_do_not_push/cbt_cities.shp")
+api_key <- "703e8f1add3b427bb18a1a8946dc7e29"
+
+
+
+m <- leaflet(locations) %>% setView(lng = -105.89, lat = 40.23, zoom = 11.2) %>% addTiles("https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey=703e8f1add3b427bb18a1a8946dc7e29") %>%
+  addMarkers(label = ~Site, labelOptions = labelOptions(noHide = T, textOnly = TRUE, textsize = "22px", direction = "left"))
+m
+
+n <- leaflet(cities) %>% setView(lat = 40.17, lng = -105.10, zoom = 9.1) %>%
+  addTiles("https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey=703e8f1add3b427bb18a1a8946dc7e29") %>%
+  addCircleMarkers(radius = 5, 
+                   stroke = FALSE, 
+                   fillOpacity = 0.9,
+                   color = "black",
+                   label = ~City, 
+                   labelOptions = labelOptions(noHide = T, textOnly = TRUE, 
+                                               textsize = "18px", 
+                                               direction = "right"))
+n
+
+```
+
+
+#final facet plot
+```{r}
+#plots are depth, swe_plot, and reservoir_plot2 (maybe convert this to billions m3)
+pg1 <- plot_grid(depth, swe_plot, reservoir_plot2, ncol=1, align = "hv")
+pg1
+
+
+```
+
+
